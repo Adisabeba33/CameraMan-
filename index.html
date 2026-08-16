@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0d12">
+<meta name="description" content="Хроно-камера — камера, которая снимает не мгновение, а отрезок времени.">
+<title>Хроно-камера</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="view"></canvas>
+  <video id="src" playsinline muted autoplay></video>
+
+  <div id="flash" aria-hidden="true"></div>
+
+  <div id="hint" class="hint" role="status"></div>
+
+  <div id="rec-pill" class="rec-pill" hidden><span class="dot"></span><span id="rec-time">0:00</span></div>
+</div>
+
+<header id="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" class="logo" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+    <div class="brand-txt">
+      <strong id="mode-title">Слит-скан</strong>
+      <span id="mode-sub">каждый столбец кадра — свой момент</span>
+    </div>
+  </div>
+  <div class="top-actions">
+    <button id="btn-params" class="icon-btn on" title="Настройки режима" aria-label="Настройки режима" aria-pressed="true">
+      <svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h14"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></svg>
+    </button>
+    <button id="btn-flip" class="icon-btn" title="Сменить камеру (F)" aria-label="Сменить камеру">
+      <svg viewBox="0 0 24 24"><path d="M4 9V7a2 2 0 0 1 2-2h3l1.5-2h3L15 5h3a2 2 0 0 1 2 2v2"/><path d="M20 15v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2"/><path d="m7 12 2.5-2.5M7 12l2.5 2.5M17 12l-2.5-2.5M17 12l-2.5 2.5"/></svg>
+    </button>
+    <button id="btn-settings" class="icon-btn" title="Настройки" aria-label="Настройки">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
+    </button>
+  </div>
+</header>
+
+<section id="params" class="panel" hidden></section>
+
+<footer id="bottom">
+  <nav id="modes" class="modes" aria-label="Режимы съёмки"></nav>
+  <div class="controls">
+    <button id="btn-gallery" class="round ghost" title="Снимки" aria-label="Снимки">
+      <span id="gallery-thumb"></span>
+      <span id="gallery-count" class="badge" hidden>0</span>
+    </button>
+    <button id="btn-shot" class="shutter" title="Снимок (Пробел)" aria-label="Сделать снимок"></button>
+    <button id="btn-rec" class="round rec" title="Запись видео (R)" aria-label="Записать видео"><span></span></button>
+  </div>
+</footer>
+
+<div id="sheet" class="sheet" hidden>
+  <div class="sheet-card">
+    <div class="sheet-head"><h2 id="sheet-title">Настройки</h2><button id="sheet-close" class="icon-btn" aria-label="Закрыть"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div id="sheet-body" class="sheet-body"></div>
+  </div>
+</div>
+
+<div id="boot" class="boot">
+  <div class="boot-card">
+    <svg viewBox="0 0 24 24" class="logo big" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+    <h1>Хроно-камера</h1>
+    <p>Снимает не мгновение, а отрезок времени. Слит-скан, световая кисть, стробо-хронофотография, эхо, выделение движения.</p>
+    <button id="btn-start" class="primary">Включить камеру</button>
+    <p id="boot-err" class="err" hidden></p>
+  </div>
+</div>
+
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
