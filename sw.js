@@ -3,7 +3,7 @@
 // Стратегия — «сначала сеть»: приложение весит десятки килобайт, поэтому свежесть
 // важнее экономии. Кэш остаётся полноценным запасом на случай офлайна.
 
-const CACHE = 'chrono-camera-v4';
+const CACHE = 'chrono-camera-v5';
 const SHELL = [
   './',
   './index.html',
@@ -23,7 +23,8 @@ const SHELL = [
 self.addEventListener('install', (e) => {
   e.waitUntil(
     caches.open(CACHE)
-      .then((c) => c.addAll(SHELL))
+      // reload — мимо HTTP-кэша: иначе в оболочку попадут файлы разных версий
+      .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
       .catch(() => self.skipWaiting())
   );
@@ -45,10 +46,14 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
 
-  const key = req.mode === 'navigate' ? './index.html' : req;
+  const isNav = req.mode === 'navigate';
+  const key = isNav ? './index.html' : req;
+  // Модули импортируют друг друга без версий в именах, поэтому любой
+  // подтянутый из HTTP-кэша файл может оказаться из другой сборки.
+  const net = isNav ? fetch(req) : fetch(req, { cache: 'no-store' });
 
   e.respondWith(
-    fetch(req)
+    net
       .then((res) => {
         if (res.ok && res.type === 'basic') {
           const copy = res.clone();

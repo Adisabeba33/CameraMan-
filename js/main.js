@@ -8,7 +8,7 @@ import { el, icon, buildParams, row, switchBtn, select, makeHinter } from './ui.
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'chronocam.v1';
-const APP_VERSION = '1.2';
+const APP_VERSION = '1.3';
 
 const dom = {
   stage: $('stage'), canvas: $('view'), video: $('src'), boot: $('boot'), bootErr: $('boot-err'), start: $('btn-start'),
@@ -203,6 +203,24 @@ function fail(msg) {
   dom.bootErr.textContent = msg;
   dom.bootErr.hidden = false;
   dom.boot.classList.remove('gone');
+  if (!document.getElementById('btn-hard-reload')) {
+    dom.bootErr.after(el('button', {
+      id: 'btn-hard-reload', class: 'pill-btn', style: 'margin-top:14px',
+      text: 'Очистить кэш и перезагрузить',
+      onclick: hardReload,
+    }));
+  }
+}
+
+/** Аварийный выход, если приложение застряло на файлах разных версий. */
+async function hardReload() {
+  try {
+    const regs = (await navigator.serviceWorker?.getRegistrations?.()) || [];
+    await Promise.all(regs.map((r) => r.unregister()));
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) => caches.delete(k)));
+  } catch { /* нечего чистить */ }
+  location.reload();
 }
 
 async function requestWakeLock() {
