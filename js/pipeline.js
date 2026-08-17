@@ -15,6 +15,8 @@ const PROGRAM_SRC = {
   echo: SH.ECHO,
   motionHeat: SH.MOTION_HEAT,
   motionView: SH.MOTION_VIEW,
+  nvStack: SH.NV_STACK,
+  nvView: SH.NV_VIEW,
   present: SH.PRESENT,
 };
 

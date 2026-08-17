@@ -244,6 +244,54 @@ export const MODES = [
       return ctx.scene.tex;
     },
   },
+
+  {
+    id: 'nightvision',
+    name: 'Ночное видение',
+    sub: 'зелёный свет, как в приборе',
+    hint: 'Для полутьмы: прибор копит свет нескольких кадров и усиливает его. Темно — подними усиление и накопление.',
+    icon: 'M2 12a4 4 0 1 0 8 0 4 4 0 1 0-8 0M14 12a4 4 0 1 0 8 0 4 4 0 1 0-8 0M10 12h4M3 8l1.5-3h15L21 8',
+    aux: true,
+    params: [
+      SEG('phosphor', 'Люминофор', [
+        { v: 0, label: 'Зелёный' },
+        { v: 1, label: 'Белый' },
+        { v: 2, label: 'Янтарный' },
+      ], 0),
+      S('gain', 'Усиление света', 1, 12, 0.5, 4, (v) => '×' + v),
+      S('stack', 'Накопление кадров', 1, 16, 1, 8, (v) => String(v)),
+      S('bloom', 'Свечение огней', 0, 1, 0.05, 0.5, pct),
+      S('noise', 'Шум прибора', 0, 0.4, 0.01, 0.12, pct),
+      SEG('mask', 'Окуляры', [
+        { v: 0, label: 'Нет' },
+        { v: 1, label: 'Один' },
+        { v: 2, label: 'Два' },
+      ], 2),
+    ],
+    render(ctx) {
+      const p = ctx.params;
+      // проход 1: накопление света из истории + усиление
+      ctx.draw(ctx.P('nvStack'), ctx.aux.write, {
+        uHist: ctx.hist.tex,
+        uHead: ctx.hist.head,
+        uCount: ctx.hist.layers,
+        uStack: p.stack,
+        uGain: p.gain,
+      });
+      ctx.aux.swap();
+      // проход 2: люминофор, шум, ореолы, окуляры
+      ctx.draw(ctx.P('nvView'), ctx.scene, {
+        uSrc: ctx.aux.read.tex,
+        uPhosphor: p.phosphor,
+        uNoise: p.noise,
+        uMask: p.mask,
+        uBloom: p.bloom,
+        uTime: ctx.time,
+        uAspect: ctx.w / ctx.h,
+      });
+      return ctx.scene.tex;
+    },
+  },
 ];
 
 export const STRIDE_PARAM = S('_stride', 'Темп времени', 1, 8, 1, 2, (v) => '1/' + v);

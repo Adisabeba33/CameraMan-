@@ -1,6 +1,6 @@
 // Оффлайн-оболочка: приложение целиком локальное, сеть нужна только за обновлениями.
 
-const CACHE = 'chrono-camera-v1';
+const CACHE = 'chrono-camera-v2';
 const SHELL = [
   './',
   './index.html',

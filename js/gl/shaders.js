@@ -191,6 +191,77 @@ void main(){
   fragColor = vec4(outc, 1.0);
 }`);
 
+/**
+ * Ночное видение, проход 1: складываем несколько последних кадров
+ * (реальное накопление света, как в ночных приборах) и мягко усиливаем.
+ */
+export const NV_STACK = fs(`
+uniform sampler2DArray uHist;
+uniform float uHead, uCount, uStack, uGain;
+void main(){
+  vec3 acc = vec3(0.0);
+  float n = 0.0;
+  for (int i = 0; i < 16; i++) {
+    if (float(i) >= uStack) break;
+    acc += texture(uHist, vec3(vUv, mod(uHead - float(i), uCount))).rgb;
+    n += 1.0;
+  }
+  acc /= max(n, 1.0);
+  // мягкое усиление: тени тянутся вверх, света не выгорают
+  fragColor = vec4(1.0 - exp(-acc * uGain), 1.0);
+}`);
+
+/** Ночное видение, проход 2: люминофор, шум фотонов, свечение огней, окуляры. */
+export const NV_VIEW = fs(`
+uniform sampler2D uSrc;
+uniform float uPhosphor, uNoise, uMask, uBloom, uTime, uAspect;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+void main(){
+  float l = luma(texture(uSrc, vUv).rgb);
+
+  // ореолы вокруг ярких источников света
+  if (uBloom > 0.001) {
+    float b = 0.0;
+    for (int i = 0; i < 8; i++) {
+      float a = float(i) * 0.7854;
+      vec2 off = vec2(cos(a) / uAspect, sin(a)) * 0.012;
+      b += max(0.0, luma(texture(uSrc, vUv + off).rgb) - 0.55);
+    }
+    l += b * 0.125 * uBloom * 1.6;
+  }
+
+  // шум фотонов: сильнее в темноте, мерцает каждый кадр
+  vec2 seed = vUv * vec2(917.0, 533.0) + fract(uTime * 7.31) * 61.7;
+  l += (hash(seed) - 0.5) * uNoise * (1.15 - l);
+  // редкие «искры» усилителя
+  l += step(0.9985, hash(seed + 47.1)) * (1.0 - l) * uNoise * 2.5;
+  l = clamp(l, 0.0, 1.0);
+
+  // люминофор: зелёный P43, белый или янтарный
+  vec3 c;
+  if (uPhosphor < 0.5)      c = vec3(0.10, 1.00, 0.28) * l;
+  else if (uPhosphor < 1.5) c = vec3(0.86, 1.00, 0.94) * l;
+  else                      c = vec3(1.00, 0.72, 0.22) * l;
+  c = mix(c, vec3(l), smoothstep(0.72, 1.0, l) * 0.6); // яркое выцветает в белый
+
+  // маска окуляров (координаты нормированы по ширине кадра)
+  if (uMask > 0.5) {
+    vec2 p = (vUv - 0.5) * vec2(1.0, 1.0 / uAspect);
+    float m;
+    if (uMask < 1.5) {
+      float r = 0.47 * min(1.0, 1.0 / uAspect);
+      m = 1.0 - smoothstep(r - 0.04, r, length(p));
+    } else {
+      float r = 0.19;
+      float m1 = 1.0 - smoothstep(r - 0.035, r, length(p - vec2(0.145, 0.0)));
+      float m2 = 1.0 - smoothstep(r - 0.035, r, length(p + vec2(0.145, 0.0)));
+      m = max(m1, m2);
+    }
+    c *= mix(0.02, 1.0, m);
+  }
+  fragColor = vec4(c, 1.0);
+}`);
+
 /** Финальный вывод: тон, виньетка, зерно и линия сканирования. */
 export const PRESENT = fs(`
 uniform sampler2D uScene;
