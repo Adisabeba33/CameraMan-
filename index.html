@@ -48,7 +48,12 @@
 <section id="params" class="panel" hidden></section>
 
 <footer id="bottom">
-  <nav id="modes" class="modes" aria-label="Режимы съёмки"></nav>
+  <div class="modes-wrap">
+    <nav id="modes" class="modes" aria-label="Режимы съёмки"></nav>
+    <button id="modes-more" class="modes-more" aria-label="Ещё режимы" hidden>
+      <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+    </button>
+  </div>
   <div class="controls">
     <button id="btn-gallery" class="round ghost" title="Снимки" aria-label="Снимки">
       <span id="gallery-thumb"></span>

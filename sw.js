@@ -1,6 +1,9 @@
 // Оффлайн-оболочка: приложение целиком локальное, сеть нужна только за обновлениями.
+//
+// Стратегия — «сначала сеть»: приложение весит десятки килобайт, поэтому свежесть
+// важнее экономии. Кэш остаётся полноценным запасом на случай офлайна.
 
-const CACHE = 'chrono-camera-v2';
+const CACHE = 'chrono-camera-v3';
 const SHELL = [
   './',
   './index.html',
@@ -34,31 +37,25 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+self.addEventListener('message', (e) => {
+  if (e.data === 'skip-waiting') self.skipWaiting();
+});
+
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
 
-  // Навигация: сначала сеть (чтобы получать обновления), офлайн — из кэша.
-  if (req.mode === 'navigate') {
-    e.respondWith(
-      fetch(req)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put('./index.html', copy));
-          return res;
-        })
-        .catch(() => caches.match('./index.html'))
-    );
-    return;
-  }
+  const key = req.mode === 'navigate' ? './index.html' : req;
 
   e.respondWith(
-    caches.match(req).then((hit) => hit || fetch(req).then((res) => {
-      if (res.ok && res.type === 'basic') {
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(req, copy));
-      }
-      return res;
-    }))
+    fetch(req)
+      .then((res) => {
+        if (res.ok && res.type === 'basic') {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(key, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(key).then((hit) => hit || caches.match('./index.html')))
   );
 });

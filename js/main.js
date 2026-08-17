@@ -8,10 +8,11 @@ import { el, icon, buildParams, row, switchBtn, select, makeHinter } from './ui.
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'chronocam.v1';
+const APP_VERSION = '1.1';
 
 const dom = {
   canvas: $('view'), video: $('src'), boot: $('boot'), bootErr: $('boot-err'), start: $('btn-start'),
-  modes: $('modes'), params: $('params'), title: $('mode-title'), sub: $('mode-sub'), hint: $('hint'),
+  modes: $('modes'), modesMore: $('modes-more'), params: $('params'), title: $('mode-title'), sub: $('mode-sub'), hint: $('hint'),
   flip: $('btn-flip'), settings: $('btn-settings'), shot: $('btn-shot'), rec: $('btn-rec'), paramsBtn: $('btn-params'),
   recPill: $('rec-pill'), recTime: $('rec-time'), flash: $('flash'),
   gallery: $('btn-gallery'), thumb: $('gallery-thumb'), count: $('gallery-count'),
@@ -77,6 +78,13 @@ function renderModeChips() {
     chip.dataset.mode = m.id;
     dom.modes.appendChild(chip);
   }
+  updateModesMore();
+}
+
+/** Стрелка-подсказка видна, пока лента режимов прокручена не до конца. */
+function updateModesMore() {
+  const n = dom.modes;
+  dom.modesMore.hidden = n.scrollLeft + n.clientWidth >= n.scrollWidth - 8;
 }
 
 function setMode(id, quiet = false) {
@@ -88,7 +96,7 @@ function setMode(id, quiet = false) {
   dom.title.textContent = m.name;
   dom.sub.textContent = m.sub;
   [...dom.modes.children].forEach((c) => c.classList.toggle('on', c.dataset.mode === id));
-  document.querySelector(`.mode-chip.on`)?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  document.querySelector('.mode-chip.on')?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
   renderParams();
   if (!quiet) say(m.hint, 4200);
 }
@@ -272,6 +280,8 @@ function buildSettings(body) {
   body.appendChild(grade);
 
   body.append(
+    el('h3', { text: 'О приложении' }),
+    row(`Хроно-камера ${APP_VERSION}`, `${MODES.length} режимов · всё считается на устройстве`, null),
     el('h3', { text: 'Горячие клавиши' }),
     el('div', { class: 'row' }, [el('small', {
       text: 'Пробел — снимок · R — запись · C — сброс накопления · F — сменить камеру · P — панель режима · 1…7 — режимы',
@@ -312,6 +322,11 @@ dom.rec.addEventListener('click', toggleRecord);
 dom.gallery.addEventListener('click', () => openSheet('Снимки', buildGallery));
 dom.settings.addEventListener('click', () => openSheet('Настройки', buildSettings));
 dom.paramsBtn.addEventListener('click', () => { paramsOpen = !paramsOpen; applyParamsVisibility(); });
+dom.modes.addEventListener('scroll', updateModesMore, { passive: true });
+window.addEventListener('resize', updateModesMore);
+dom.modesMore.addEventListener('click', () => {
+  dom.modes.scrollBy({ left: dom.modes.clientWidth * 0.75, behavior: 'smooth' });
+});
 dom.sheetClose.addEventListener('click', closeSheet);
 dom.sheet.addEventListener('click', (e) => { if (e.target === dom.sheet) closeSheet(); });
 
@@ -349,5 +364,23 @@ setMode(state.modeId, true);
 dom.params.hidden = true; // до запуска камеры панель не нужна
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
+  // Новая версия должна доезжать сама: без этого установленное PWA живёт
+  // на старых файлах, пока пользователь не переустановит его вручную.
+  // Перезагружаемся только при СМЕНЕ версии. При самой первой регистрации
+  // контроллер тоже меняется (null → sw), и без этой проверки страница
+  // перезагрузилась бы прямо во время запуска камеры.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloading) return;
+    reloading = true;
+    location.reload();
+  });
+  window.addEventListener('load', async () => {
+    try {
+      const reg = await navigator.serviceWorker.register('./sw.js');
+      reg.update();
+      setInterval(() => reg.update(), 60 * 60 * 1000);
+    } catch { /* офлайн или заблокировано настройками — не критично */ }
+  });
 }

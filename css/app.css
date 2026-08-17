@@ -120,8 +120,18 @@ input[type=range]::-moz-range-thumb{width:18px;height:18px;border:0;border-radiu
   padding:0 0 calc(env(safe-area-inset-bottom) + 12px);
   background:linear-gradient(0deg,rgba(3,4,7,.92) 55%,rgba(3,4,7,0));
 }
-.modes{display:flex;gap:7px;overflow-x:auto;padding:12px var(--pad) 10px;scrollbar-width:none}
+.modes-wrap{position:relative}
+.modes{display:flex;gap:7px;overflow-x:auto;padding:12px var(--pad) 10px;scrollbar-width:none;scroll-padding-inline:14px}
 .modes::-webkit-scrollbar{display:none}
+/* подсказка, что лента режимов продолжается вбок */
+.modes-more{
+  position:absolute;right:0;top:0;bottom:0;width:56px;z-index:1;
+  display:flex;align-items:center;justify-content:flex-end;padding:0 10px 0 0;color:var(--accent);
+  background:linear-gradient(90deg,rgba(6,7,11,0),rgba(6,7,11,.9) 60%);
+  animation:nudge 1.8s ease-in-out 3;
+}
+.modes-more svg{width:20px;height:20px;stroke-width:2.2}
+@keyframes nudge{0%,100%{transform:translateX(0)}50%{transform:translateX(-4px)}}
 .mode-chip{
   flex:none;display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:999px;
   background:rgba(255,255,255,.07);border:1px solid transparent;font-size:13px;white-space:nowrap;color:var(--dim);
