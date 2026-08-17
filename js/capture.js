@@ -29,8 +29,8 @@ export class Capture {
 
   get recording() { return !!this.recorder && this.recorder.state === 'recording'; }
 
-  async photo(modeId) {
-    const blob = await new Promise((res) => this.canvas.toBlob(res, 'image/png'));
+  async photo(modeId, source = this.canvas) {
+    const blob = await new Promise((res) => source.toBlob(res, 'image/png'));
     if (!blob) throw new Error('Не удалось получить кадр');
     return this._add(blob, 'photo', `chrono-${modeId}-${stamp()}.png`);
   }

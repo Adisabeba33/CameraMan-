@@ -292,7 +292,244 @@ export const MODES = [
       return ctx.scene.tex;
     },
   },
+
+  {
+    id: 'magnify',
+    name: 'Микроскоп движения',
+    sub: 'видно то, что глазу не заметно',
+    hint: 'Держи камеру неподвижно и не шевелись. Наведи на лицо — проступит пульс, на грудь — дыхание.',
+    icon: 'M3 12h3l2-4 2.5 8 2-6 1.5 3 2-5 2 4h3M5 5h14M5 19h14',
+    resettable: true,
+    // границы полосы пропускания в герцах
+    bands: [[0.7, 3.2], [0.12, 0.6], [3, 12]],
+    params: [
+      SEG('band', 'Что ищем', [
+        { v: 0, label: 'Пульс' },
+        { v: 1, label: 'Дыхание' },
+        { v: 2, label: 'Вибрацию' },
+      ], 0),
+      S('gain', 'Усиление', 5, 120, 5, 40, (v) => '×' + v),
+      S('blur', 'Сглаживание', 0.5, 6, 0.5, 2.5, (v) => v.toFixed(1)),
+      SEG('style', 'Показ', [
+        { v: 0, label: 'Поверх кадра' },
+        { v: 1, label: 'Только сигнал' },
+        { v: 2, label: 'Карта' },
+      ], 0),
+      TOG('pulse', 'Считать пульс', 1),
+    ],
+    render(ctx) {
+      const p = ctx.params;
+      const [fLo, fHi] = this.bands[p.band] || this.bands[0];
+      const alpha = (f) => 1 - Math.exp(-2 * Math.PI * f * Math.min(ctx.dt, 0.1));
+
+      const blurred = ctx.get('mgBlur', 'target');
+      const slow = ctx.get('mgSlow', 'pp');
+      const fast = ctx.get('mgFast', 'pp');
+
+      ctx.draw(ctx.P('blurHist'), blurred, {
+        uHist: ctx.hist.tex,
+        uHead: ctx.hist.head,
+        uTexel: ctx.texel,
+        uRadius: p.blur,
+      });
+      for (const [pp, f] of [[slow, fLo], [fast, fHi]]) {
+        ctx.draw(ctx.P('iir'), pp.write, {
+          uSrc: blurred.tex,
+          uPrev: pp.read.tex,
+          uAlpha: alpha(f),
+          uInit: ctx.reset ? 1 : 0,
+        });
+        pp.swap();
+      }
+
+      ctx.draw(ctx.P('magnifyView'), ctx.scene, {
+        uHist: ctx.hist.tex,
+        uHead: ctx.hist.head,
+        uFast: fast.read.tex,
+        uSlow: slow.read.tex,
+        uGain: p.gain,
+        uStyle: p.style,
+      });
+
+      if (p.pulse) measurePulse(ctx, fast.read, slow.read);
+      return ctx.scene.tex;
+    },
+  },
+
+  {
+    id: 'photofinish',
+    name: 'Фотофиниш',
+    sub: 'время вытягивается в длинную ленту',
+    hint: 'Пусть объект пересекает щель — поезд, рука, бегун. Затвор сохранит всю ленту целиком.',
+    icon: 'M3 5v14M7 5v14M11 5v14M15 5v14M19 5v14M3 12h16',
+    resettable: true,
+    params: [
+      S('pos', 'Где щель', 0, 1, 0.01, 0.5, pct),
+      S('slit', 'Ширина щели', 0.002, 0.06, 0.002, 0.01, (v) => (v * 100).toFixed(1) + '%'),
+      S('speed', 'Колонок за кадр', 1, 8, 1, 2, (v) => String(v)),
+      S('length', 'Длина ленты', 1024, 8192, 512, 4096, (v) => v + ' px'),
+    ],
+    render(ctx) {
+      const p = ctx.params;
+      const total = Math.round(p.length);
+      const strip = ctx.get('strip', 'target8', total, ctx.h);
+      // смена длины пересоздаёт ленту — счётчик записанного надо обнулить вместе с ней
+      if (ctx.reset || ctx.mem.total !== total) {
+        ctx.mem.wrote = 0;
+        ctx.mem.total = total;
+      }
+      let wrote = ctx.mem.wrote ?? 0;
+
+      // колонки привязаны к кадрам камеры, а не к перерисовкам экрана:
+      // иначе лента растягивалась бы по-разному при разной частоте кадров
+      const step = Math.max(1, p.speed | 0);
+      if (ctx.fresh && wrote < total) {
+        const width = Math.min(step, total - wrote);
+        ctx.draw(ctx.P('stripWrite'), strip, {
+          uHist: ctx.hist.tex,
+          uHead: ctx.hist.head,
+          uPos: p.pos,
+          uSlit: p.slit,
+        }, [wrote, 0, width, ctx.h]);
+        wrote += width;
+        ctx.mem.wrote = wrote;
+        if (wrote >= total) ctx.say('Лента заполнена — жми затвор, чтобы сохранить');
+      }
+
+      ctx.draw(ctx.P('stripView'), ctx.scene, {
+        uStrip: strip.tex,
+        uHist: ctx.hist.tex,
+        uHead: ctx.hist.head,
+        uWrote: wrote,
+        uWindow: ctx.w,
+        uTotal: total,
+        uPos: p.pos,
+        uInset: 0.3,
+      });
+      return ctx.scene.tex;
+    },
+    /** Затвор сохраняет всю ленту целиком, а не её видимый кусок. */
+    exportFrame(ctx) {
+      const total = Math.round(ctx.params.length);
+      const wrote = Math.max(2, Math.round(ctx.mem.wrote ?? 0));
+      const strip = ctx.get('strip', 'target8', total, ctx.h);
+      if (wrote >= total) return { tex: strip.tex, w: total, h: ctx.h };
+      // лента заполнена не до конца — вырезаем записанную часть, без чёрного хвоста
+      const out = ctx.get('stripOut', 'target8', wrote, ctx.h);
+      ctx.draw(ctx.P('stripView'), out, {
+        uStrip: strip.tex, uWrote: wrote, uWindow: wrote, uTotal: total,
+        uHist: ctx.hist.tex, uHead: ctx.hist.head, uPos: 0, uInset: 0,  // во врезке снимок не нуждается
+      });
+      return { tex: out.tex, w: wrote, h: ctx.h };
+    },
+  },
+
+  {
+    id: 'liquid',
+    name: 'Жидкая реальность',
+    sub: 'движение искажает пространство',
+    hint: 'Двигай рукой перед камерой. «Датамош» тянет цвета за движением — как глитч в клипах.',
+    icon: 'M3 8c3-3 6 3 9 0s6-3 9 0M3 14c3-3 6 3 9 0s6-3 9 0M3 20c3-3 6 3 9 0s6-3 9 0',
+    accum: true,
+    resettable: true,
+    params: [
+      SEG('style', 'Стиль', [
+        { v: 0, label: 'Марево' },
+        { v: 1, label: 'Датамош' },
+        { v: 2, label: 'Поток' },
+      ], 0),
+      S('amount', 'Сила искажения', 0.2, 6, 0.2, 2, (v) => '×' + v.toFixed(1)),
+      S('viscosity', 'Вязкость', 0.05, 0.95, 0.05, 0.6, pct),
+      S('spread', 'Растекание', 1, 6, 0.5, 3, (v) => v.toFixed(1)),
+      S('refresh', 'Обновление цвета', 0, 0.3, 0.01, 0.04, (v) => (v <= 0.001 ? 'нет' : pct(v * 3))),
+    ],
+    render(ctx) {
+      const p = ctx.params;
+      const raw = ctx.get('flowRaw', 'target');
+      const flow = ctx.get('flow', 'pp');
+
+      ctx.draw(ctx.P('flowRaw'), raw, {
+        uHist: ctx.hist.tex,
+        uHead: ctx.hist.head,
+        uCount: ctx.hist.layers,
+        uBack: 2,
+        uTexel: ctx.texel,
+      });
+      ctx.draw(ctx.P('flowSmooth'), flow.write, {
+        uSrc: raw.tex,
+        uPrev: flow.read.tex,
+        uTexel: ctx.texel,
+        uRadius: p.spread,
+        uMix: 1 - p.viscosity,
+        uInit: ctx.reset ? 1 : 0,   // поле потока переживает смену стиля
+      });
+      flow.swap();
+
+      // смена стиля тоже требует пересева: иначе датамош стартует с пустого холста
+      const init = ctx.reset || ctx.mem.style !== p.style;
+      ctx.mem.style = p.style;
+
+      // датамош копит цвета сам в себе, остальным стилям хватает обычной сцены
+      const target = p.style === 1 ? ctx.accum.write : ctx.scene;
+      ctx.draw(ctx.P('liquidView'), target, {
+        uHist: ctx.hist.tex,
+        uHead: ctx.hist.head,
+        uFlow: flow.read.tex,
+        uPrevColor: ctx.accum.read.tex,
+        uAmount: p.amount,
+        uStyle: p.style,
+        uRefresh: p.refresh,
+        uInit: init ? 1 : 0,
+      });
+      if (p.style !== 1) return ctx.scene.tex;
+      ctx.accum.swap();
+      return ctx.accum.read.tex;
+    },
+  },
 ];
+
+/**
+ * Считает пульс по колебанию зелёного канала в центре кадра.
+ * Сигнал сворачивается в один пиксель на GPU, дальше — автокорреляция на CPU.
+ */
+function measurePulse(ctx, fast, slow) {
+  const m = ctx.mem;
+  if (!m.pulse || ctx.reset) m.pulse = { buf: [], t: [], bpm: 0, last: 0 };
+  const st = m.pulse;
+
+  st.tick = (st.tick ?? 0) + 1;
+  if (st.tick % 2) return;      // чтение пикселя синхронизирует GPU — хватит и половины кадров
+
+  const probe = ctx.get('pulseProbe', 'target8', 1, 1);
+  ctx.draw(ctx.P('pulseProbe'), probe, { uFast: fast.tex, uSlow: slow.tex, uScale: 60 });
+  st.buf.push(ctx.readPixel(probe)[0] / 255 - 0.5);
+  st.t.push(ctx.time);
+  while (st.buf.length > 400) { st.buf.shift(); st.t.shift(); }
+
+  const span = st.t[st.t.length - 1] - st.t[0];
+  if (span < 6 || ctx.time - st.last < 1) return;
+  st.last = ctx.time;
+
+  const n = st.buf.length;
+  const rate = (n - 1) / span;                       // кадров в секунду
+  const mean = st.buf.reduce((a, b) => a + b, 0) / n;
+  const x = st.buf.map((v) => v - mean);
+  const norm = x.reduce((a, v) => a + v * v, 0);
+  if (norm < 1e-6) return;
+
+  // ищем период в диапазоне 40…180 ударов в минуту
+  let best = 0;
+  let bestLag = 0;
+  for (let lag = Math.floor(rate * 60 / 180); lag <= Math.ceil(rate * 60 / 40) && lag < n - 4; lag++) {
+    let sum = 0;
+    for (let i = lag; i < n; i++) sum += x[i] * x[i - lag];
+    const r = sum / norm;
+    if (r > best) { best = r; bestLag = lag; }
+  }
+  st.bpm = bestLag && best > 0.28 ? Math.round((rate * 60) / bestLag) : 0;
+  st.quality = best;
+  ctx.say(st.bpm ? `Пульс ≈ ${st.bpm} уд/мин` : 'Пульс не читается — замри и добавь света', 1400);
+}
 
 export const STRIDE_PARAM = S('_stride', 'Темп времени', 1, 8, 1, 2, (v) => '1/' + v);
 

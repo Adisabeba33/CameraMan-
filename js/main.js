@@ -8,7 +8,7 @@ import { el, icon, buildParams, row, switchBtn, select, makeHinter } from './ui.
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'chronocam.v1';
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.5';
 
 const dom = {
   stage: $('stage'), canvas: $('view'), video: $('src'), boot: $('boot'), bootErr: $('boot-err'), start: $('btn-start'),
@@ -235,7 +235,7 @@ async function takePhoto() {
   void dom.flash.offsetWidth;
   dom.flash.classList.add('on');
   try {
-    await capture.photo(state.modeId);
+    await capture.photo(state.modeId, pipe.snapshot());
     say('Снимок в галерее приложения — там его можно сохранить');
   } catch (e) {
     say('Не удалось сохранить кадр');
@@ -319,7 +319,7 @@ function buildSettings(body) {
     row(`Хроно-камера ${APP_VERSION}`, `${MODES.length} режимов · всё считается на устройстве`, null),
     el('h3', { text: 'Горячие клавиши' }),
     el('div', { class: 'row' }, [el('small', {
-      text: 'Пробел — снимок · R — запись · C — сброс накопления · F — сменить камеру · P — панель режима · 1…7 — режимы',
+      text: 'Пробел — снимок · R — запись · C — сброс накопления · F — сменить камеру · P — панель режима · 1…9, 0 — режимы',
     })]),
   );
 }
@@ -388,7 +388,7 @@ document.addEventListener('keydown', (e) => {
   else if (k === 'f') dom.flip.click();
   else if (k === 'escape') closeSheet();
   else if (k === 'p') dom.paramsBtn.click();
-  else if (/^[1-9]$/.test(k) && MODES[+k - 1]) setMode(MODES[+k - 1].id);
+  else if (/^[0-9]$/.test(k) && MODES[(+k + 9) % 10]) setMode(MODES[(+k + 9) % 10].id);
 });
 
 document.addEventListener('visibilitychange', () => {

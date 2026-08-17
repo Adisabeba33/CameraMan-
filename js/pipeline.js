@@ -17,6 +17,15 @@ const PROGRAM_SRC = {
   motionView: SH.MOTION_VIEW,
   nvStack: SH.NV_STACK,
   nvView: SH.NV_VIEW,
+  blurHist: SH.BLUR_HIST,
+  iir: SH.IIR,
+  magnifyView: SH.MAGNIFY_VIEW,
+  pulseProbe: SH.PULSE_PROBE,
+  stripWrite: SH.STRIP_WRITE,
+  stripView: SH.STRIP_VIEW,
+  flowRaw: SH.FLOW_RAW,
+  flowSmooth: SH.FLOW_SMOOTH,
+  liquidView: SH.LIQUID_VIEW,
   present: SH.PRESENT,
 };
 
@@ -40,6 +49,7 @@ export class Pipeline {
     this.accum = null;
     this.bg = null;
     this.aux = null;
+    this.extra = new Map();   // буферы, которые нужны лишь отдельным режимам
 
     this.fit = 'cover';
     this.dispW = 0;
@@ -58,6 +68,8 @@ export class Pipeline {
     this.last = 0;
     this.strideCounter = 0;
     this.newFrame = false;
+    this.lastCtx = null;
+    this.lastTex = null;
     this.onHint = () => {};
 
     this.videoTex = this.gl.createTexture();
@@ -119,8 +131,37 @@ export class Pipeline {
     this.pendingReset = true;
   }
 
+  /**
+   * Буфер по требованию: тяжёлые цели вроде ленты фотофиниша или поля потока
+   * создаются только тогда, когда режим их действительно просит.
+   */
+  getTarget(name, kind, w = this.w, h = this.h) {
+    const key = `${kind}:${w}x${h}`;
+    const cached = this.extra.get(name);
+    if (cached && cached.key === key) return cached.obj;
+    cached?.obj.dispose();
+    const gl = this.gl;
+    const obj = kind === 'pp' ? new PingPong(gl, w, h, true)
+      : kind === 'pp8' ? new PingPong(gl, w, h, false)
+      : kind === 'target8' ? new Target(gl, w, h, false)
+      : new Target(gl, w, h, true);
+    // чистим сразу: сброс режима здесь недопустим — он стёр бы уже накопленное
+    for (const t of obj instanceof PingPong ? [obj.a, obj.b] : [obj]) this.clearTarget(t);
+    this.extra.set(name, { key, obj });
+    return obj;
+  }
+
+  clearTarget(t) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t.fbo);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+
   dispose() {
     for (const t of [this.hist, this.scene, this.accum, this.bg, this.aux]) t?.dispose();
+    for (const { obj } of this.extra.values()) obj.dispose();
+    this.extra.clear();
     this.hist = this.scene = this.accum = this.bg = this.aux = null;
   }
 
@@ -137,7 +178,7 @@ export class Pipeline {
   }
 
   /** Один рисунок: программа + цель + униформы. target === null → канвас. */
-  draw(prog, target, uniforms) {
+  draw(prog, target, uniforms, vp = null) {
     const gl = this.gl;
     if (target === null) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -146,6 +187,7 @@ export class Pipeline {
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
       gl.viewport(0, 0, target.w, target.h);
     }
+    if (vp) gl.viewport(vp[0], vp[1], vp[2], vp[3]);
     prog.use();
     for (const k in uniforms) prog.set(k, uniforms[k]);
     gl.bindVertexArray(this.quad);
@@ -164,6 +206,15 @@ export class Pipeline {
     prog.set('uCrop', this.crop);
     gl.bindVertexArray(this.quad);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  /** Один пиксель из цели — для замеров на стороне JS. Вызывать не чаще, чем нужно. */
+  readPixel(target, x = 0, y = 0) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
+    const px = new Uint8Array(4);
+    gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    return px;
   }
 
   uploadVideo() {
@@ -187,6 +238,7 @@ export class Pipeline {
     const reset = this.pendingReset;
 
     // 1. Загрузка кадра камеры и запись в историю
+    const fresh = reset || this.newFrame;
     this.uploadVideo();
     if (reset) {
       for (let i = 0; i < this.hist.layers; i++) this.ingestTo(i);
@@ -219,6 +271,7 @@ export class Pipeline {
     // 3. Собственно эффект
     const ctx = {
       w: this.w, h: this.h,
+      texel: [1 / this.w, 1 / this.h],
       hist: this.hist,
       scene: this.scene,
       accum: this.accum,
@@ -229,16 +282,25 @@ export class Pipeline {
       dt: this.dt,
       time: this.time,
       reset,
+      fresh,   // пришёл ли новый кадр камеры именно сейчас
       line: null,
       P: (n) => this.P(n),
-      draw: (p, t, u) => this.draw(p, t, u),
+      draw: (p, t, u, vp) => this.draw(p, t, u, vp),
+      get: (n, kind, w, h) => this.getTarget(n, kind, w, h),
+      readPixel: (t, x, y) => this.readPixel(t, x, y),
       say: (m) => this.onHint(m),
     };
     const tex = mode.render(ctx) || this.scene.tex;
     this.pendingReset = false;
+    this.lastCtx = ctx;
+    this.lastTex = tex;
 
     // 4. Вывод на экран
-    const line = ctx.line;
+    this.present(tex, ctx.line);
+  }
+
+  /** Финальный проход: тон, виньетка, зерно и линия сканирования. */
+  present(tex, line) {
     const g = this.grade;
     this.draw(this.P('present'), null, {
       uScene: tex,
@@ -251,6 +313,34 @@ export class Pipeline {
       uLinePos: line ? line.pos : 0,
       uLineAxis: line ? line.axis : 0,
     });
+  }
+
+  /**
+   * Снимок для сохранения. Обычно это то, что на экране, но режим может отдать
+   * собственное изображение другого размера — так фотофиниш выгружает всю ленту,
+   * которая в экран не помещается.
+   */
+  snapshot() {
+    const out = document.createElement('canvas');
+    const ex = this.lastCtx && this.mode.exportFrame?.(this.lastCtx);
+    if (ex && ex.w > 0 && ex.h > 0) {
+      const prevW = this.canvas.width;
+      const prevH = this.canvas.height;
+      this.canvas.width = ex.w;
+      this.canvas.height = ex.h;
+      this.present(ex.tex, null);
+      out.width = ex.w;
+      out.height = ex.h;
+      out.getContext('2d').drawImage(this.canvas, 0, 0);
+      this.canvas.width = prevW;
+      this.canvas.height = prevH;
+      this.present(this.lastTex, this.lastCtx.line);   // вернуть экран как было
+    } else {
+      out.width = this.canvas.width;
+      out.height = this.canvas.height;
+      out.getContext('2d').drawImage(this.canvas, 0, 0);
+    }
+    return out;
   }
 }
 

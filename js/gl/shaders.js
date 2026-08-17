@@ -8,6 +8,11 @@ in vec2 vUv;
 out vec4 fragColor;
 
 const float PI2 = 6.28318530718;
+// Поле потока живёт со сдвигом в [0..1]: на устройствах без float-целей
+// беззнаковая текстура иначе обрезала бы отрицательные скорости в ноль.
+const float FLOW_RANGE = 0.05;
+vec2 encodeFlow(vec2 f){ return clamp(f, -FLOW_RANGE, FLOW_RANGE) / FLOW_RANGE * 0.5 + 0.5; }
+vec2 decodeFlow(vec2 e){ return (e - 0.5) * 2.0 * FLOW_RANGE; }
 
 float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 `;
@@ -264,6 +269,174 @@ void main(){
     c *= mix(0.02, 1.0, m);
   }
   fragColor = vec4(c, 1.0);
+}`);
+
+// ---------- Микроскоп движения ----------
+// Метод Эйлера: два временных фильтра нижних частот с разными постоянными,
+// их разница — полоса частот, которую и усиливаем. Так видно пульс и вибрацию.
+
+/** Размытие живого кадра: без него усиление вытащит наружу шум сенсора. */
+export const BLUR_HIST = fs(`
+uniform sampler2DArray uHist;
+uniform float uHead;
+uniform vec2 uTexel;
+uniform float uRadius;
+void main(){
+  vec3 c = vec3(0.0);
+  float wsum = 0.0;
+  for (int y = -2; y <= 2; y++) {
+    for (int x = -2; x <= 2; x++) {
+      float w = exp(-float(x * x + y * y) * 0.35);
+      c += texture(uHist, vec3(vUv + vec2(float(x), float(y)) * uTexel * uRadius, uHead)).rgb * w;
+      wsum += w;
+    }
+  }
+  fragColor = vec4(c / wsum, 1.0);
+}`);
+
+/** Один фильтр нижних частот: lo = lo + a * (src - lo). */
+export const IIR = fs(`
+uniform sampler2D uSrc, uPrev;
+uniform float uAlpha, uInit;
+void main(){
+  vec3 s = texture(uSrc, vUv).rgb;
+  vec3 p = texture(uPrev, vUv).rgb;
+  fragColor = vec4(uInit > 0.5 ? s : mix(p, s, uAlpha), 1.0);
+}`);
+
+export const MAGNIFY_VIEW = fs(`
+uniform sampler2DArray uHist;
+uniform float uHead;
+uniform sampler2D uFast, uSlow;
+uniform float uGain, uStyle;
+void main(){
+  vec3 live = texture(uHist, vec3(vUv, uHead)).rgb;
+  vec3 amp = (texture(uFast, vUv).rgb - texture(uSlow, vUv).rgb) * uGain;
+  vec3 outc;
+  if (uStyle < 0.5) {
+    outc = live + amp;
+  } else if (uStyle < 1.5) {
+    outc = vec3(0.5) + amp;
+  } else {
+    float m = clamp(length(amp) * 1.4, 0.0, 1.0);
+    outc = mix(vec3(luma(live) * 0.3), vec3(1.0, 0.42, 0.12), m)
+         + vec3(0.0, 0.1, 0.45) * m * (1.0 - m);
+  }
+  fragColor = vec4(clamp(outc, 0.0, 1.0), 1.0);
+}`);
+
+/** Свёртка сигнала центра кадра в один пиксель — его читает измеритель пульса. */
+export const PULSE_PROBE = fs(`
+uniform sampler2D uFast, uSlow;
+uniform float uScale;
+void main(){
+  float s = 0.0;
+  for (int y = 0; y < 8; y++) {
+    for (int x = 0; x < 8; x++) {
+      vec2 uv = vec2(0.32 + float(x) * 0.36 / 7.0, 0.30 + float(y) * 0.40 / 7.0);
+      s += texture(uFast, uv).g - texture(uSlow, uv).g;
+    }
+  }
+  fragColor = vec4(clamp(0.5 + (s / 64.0) * uScale, 0.0, 1.0), 0.0, 0.0, 1.0);
+}`);
+
+// ---------- Фотофиниш ----------
+
+/** Пишет одну колонку ленты; рисуется в узкий вьюпорт. */
+export const STRIP_WRITE = fs(`
+uniform sampler2DArray uHist;
+uniform float uHead, uPos, uSlit;
+void main(){
+  vec2 src = vec2(uPos + (vUv.x - 0.5) * uSlit, vUv.y);
+  fragColor = vec4(texture(uHist, vec3(clamp(src, 0.0, 1.0), uHead)).rgb, 1.0);
+}`);
+
+/**
+ * Показывает последние колонки ленты — окно, которое едет вслед за записью.
+ * В углу врезка с живым кадром и меткой щели: без неё непонятно, куда целиться.
+ */
+export const STRIP_VIEW = fs(`
+uniform sampler2D uStrip;
+uniform sampler2DArray uHist;
+uniform float uWrote, uWindow, uTotal, uHead, uPos, uInset;
+void main(){
+  float x = uWrote - uWindow + vUv.x * uWindow;
+  vec3 c = x < 0.0 ? vec3(0.04) : texture(uStrip, vec2(min(x, uWrote) / uTotal, vUv.y)).rgb;
+
+  if (uInset > 0.001) {
+    // равные доли uv по обеим осям сохраняют пропорции кадра
+    vec2 q = (vUv - vec2(1.0 - uInset - 0.03)) / uInset;
+    if (q.x >= 0.0 && q.x <= 1.0 && q.y >= 0.0 && q.y <= 1.0) {
+      vec3 live = texture(uHist, vec3(q, uHead)).rgb;
+      live = mix(live, vec3(0.45, 0.95, 1.0), smoothstep(0.014, 0.0, abs(q.x - uPos)));
+      float edge = min(min(q.x, 1.0 - q.x), min(q.y, 1.0 - q.y));
+      c = mix(vec3(0.45, 0.95, 1.0), live, smoothstep(0.0, 0.012, edge));
+    }
+  }
+  fragColor = vec4(c, 1.0);
+}`);
+
+// ---------- Оптический поток: жидкая реальность и датамош ----------
+
+/**
+ * Нормальный поток из уравнения переноса яркости: Ix*u + Iy*v + It = 0.
+ * Точности хватает с запасом — поле идёт не в измерения, а в искажение картинки.
+ */
+export const FLOW_RAW = fs(`
+uniform sampler2DArray uHist;
+uniform float uHead, uCount, uBack;
+uniform vec2 uTexel;
+float at(vec2 uv, float back){
+  return luma(texture(uHist, vec3(uv, mod(uHead - back, uCount))).rgb);
+}
+void main(){
+  float ix = (at(vUv + vec2(uTexel.x, 0.0), 0.0) - at(vUv - vec2(uTexel.x, 0.0), 0.0)) * 0.5;
+  float iy = (at(vUv + vec2(0.0, uTexel.y), 0.0) - at(vUv - vec2(0.0, uTexel.y), 0.0)) * 0.5;
+  float it = at(vUv, 0.0) - at(vUv, uBack);
+  vec2 f = -it * vec2(ix, iy) / (ix * ix + iy * iy + 0.0015);
+  fragColor = vec4(encodeFlow(f), 0.0, 1.0);
+}`);
+
+/** Размазывает поле потока по пространству и сглаживает во времени. */
+export const FLOW_SMOOTH = fs(`
+uniform sampler2D uSrc, uPrev;
+uniform vec2 uTexel;
+uniform float uRadius, uMix, uInit;
+void main(){
+  vec2 acc = vec2(0.0);
+  float wsum = 0.0;
+  for (int y = -2; y <= 2; y++) {
+    for (int x = -2; x <= 2; x++) {
+      float w = exp(-float(x * x + y * y) * 0.3);
+      acc += texture(uSrc, vUv + vec2(float(x), float(y)) * uTexel * uRadius).rg * w;
+      wsum += w;
+    }
+  }
+  // кодирование линейно, поэтому усреднять и смешивать можно прямо в нём
+  vec2 f = acc / wsum;
+  vec2 p = texture(uPrev, vUv).rg;
+  fragColor = vec4(uInit > 0.5 ? f : mix(p, f, uMix), 0.0, 1.0);
+}`);
+
+export const LIQUID_VIEW = fs(`
+uniform sampler2DArray uHist;
+uniform float uHead;
+uniform sampler2D uFlow, uPrevColor;
+uniform float uAmount, uStyle, uRefresh, uInit;
+void main(){
+  vec2 f = decodeFlow(texture(uFlow, vUv).rg);
+  vec3 outc;
+  if (uStyle < 0.5) {
+    outc = texture(uHist, vec3(clamp(vUv + f * uAmount, 0.0, 1.0), uHead)).rgb;
+  } else if (uStyle < 1.5) {
+    vec3 live = texture(uHist, vec3(vUv, uHead)).rgb;
+    vec3 adv = texture(uPrevColor, clamp(vUv - f * uAmount, 0.0, 1.0)).rgb;
+    outc = uInit > 0.5 ? live : mix(adv, live, uRefresh);
+  } else {
+    float m = clamp(length(f) * 90.0, 0.0, 1.0);
+    outc = (0.5 + 0.5 * cos(atan(f.y, f.x) + vec3(0.0, 2.1, 4.2))) * m;
+  }
+  fragColor = vec4(clamp(outc, 0.0, 1.0), 1.0);
 }`);
 
 /** Финальный вывод: тон, виньетка, зерно и линия сканирования. */
