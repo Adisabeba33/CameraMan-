@@ -8,10 +8,10 @@ import { el, icon, buildParams, row, switchBtn, select, makeHinter } from './ui.
 
 const $ = (id) => document.getElementById(id);
 const KEY = 'chronocam.v1';
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.2';
 
 const dom = {
-  canvas: $('view'), video: $('src'), boot: $('boot'), bootErr: $('boot-err'), start: $('btn-start'),
+  stage: $('stage'), canvas: $('view'), video: $('src'), boot: $('boot'), bootErr: $('boot-err'), start: $('btn-start'),
   modes: $('modes'), modesMore: $('modes-more'), params: $('params'), title: $('mode-title'), sub: $('mode-sub'), hint: $('hint'),
   flip: $('btn-flip'), settings: $('btn-settings'), shot: $('btn-shot'), rec: $('btn-rec'), paramsBtn: $('btn-params'),
   recPill: $('rec-pill'), recTime: $('rec-time'), flash: $('flash'),
@@ -33,6 +33,7 @@ const state = load();
 function load() {
   const base = {
     modeId: 'slitscan',
+    fit: 'cover',
     mirror: true,
     quality: 'medium',
     keepAwake: true,
@@ -45,6 +46,7 @@ function load() {
     s.params = Object.fromEntries(MODES.map((m) => [m.id, { ...defaults(m), ...(saved.params?.[m.id] || {}) }]));
     if (!MODE_BY_ID[s.modeId]) s.modeId = base.modeId;
     if (!QUALITY[s.quality]) s.quality = base.quality;
+    if (s.fit !== 'cover' && s.fit !== 'contain') s.fit = base.fit;
     return s;
   } catch {
     return base;
@@ -119,6 +121,15 @@ function renderParams() {
   applyParamsVisibility();
 }
 
+function applyFit() {
+  dom.stage.classList.toggle('cover', state.fit === 'cover');
+  if (pipe) {
+    pipe.fit = state.fit;
+    const r = dom.stage.getBoundingClientRect();
+    pipe.setDisplaySize(r.width, r.height);
+  }
+}
+
 let paramsOpen = true;
 function applyParamsVisibility() {
   const has = dom.params.childElementCount > 0;
@@ -158,6 +169,7 @@ async function boot() {
     pipe.quality = state.quality;
     pipe.grade = state.grade;
     pipe.mirror = state.mirror;
+    applyFit();
 
     const info = await camera.start({ facing: 'user' });
     camera.onFrame = () => { if (pipe) pipe.newFrame = true; };
@@ -263,10 +275,15 @@ function buildSettings(body) {
     row('Зеркальный кадр', 'как в зеркале — удобно для селфи', switchBtn(state.mirror, (v) => {
       state.mirror = v; pipe.mirror = v; pipe.reset(); save();
     })),
+    row('Кадр', 'во весь экран — как в обычной камере', select(
+      [{ value: 'cover', label: 'Во весь экран' }, { value: 'contain', label: 'Целиком, с полями' }],
+      state.fit,
+      (v) => { state.fit = v; applyFit(); save(); }
+    )),
     row('Качество', QUALITY[state.quality].label, select(
       Object.entries(QUALITY).map(([k, q]) => ({ value: k, label: q.label })),
       state.quality,
-      (k) => { state.quality = k; pipe.quality = k; pipe.resize(dom.video.videoWidth, dom.video.videoHeight); save(); closeSheet(); }
+      (k) => { state.quality = k; pipe.quality = k; save(); closeSheet(); }
     )),
     row('Не гасить экран', null, switchBtn(state.keepAwake, (v) => {
       state.keepAwake = v; save();
@@ -323,7 +340,8 @@ dom.gallery.addEventListener('click', () => openSheet('Снимки', buildGalle
 dom.settings.addEventListener('click', () => openSheet('Настройки', buildSettings));
 dom.paramsBtn.addEventListener('click', () => { paramsOpen = !paramsOpen; applyParamsVisibility(); });
 dom.modes.addEventListener('scroll', updateModesMore, { passive: true });
-window.addEventListener('resize', updateModesMore);
+window.addEventListener('resize', () => { updateModesMore(); applyFit(); });
+if ('ResizeObserver' in window) new ResizeObserver(applyFit).observe(dom.stage);
 dom.modesMore.addEventListener('click', () => {
   dom.modes.scrollBy({ left: dom.modes.clientWidth * 0.75, behavior: 'smooth' });
 });

@@ -41,6 +41,11 @@ export class Pipeline {
     this.bg = null;
     this.aux = null;
 
+    this.fit = 'cover';
+    this.dispW = 0;
+    this.dispH = 0;
+    this.crop = [1, 1];
+
     this.modeId = 'slitscan';
     this.params = {};
     this.mirror = true;
@@ -76,12 +81,29 @@ export class Pipeline {
     return p;
   }
 
-  /** Пересобирает буферы под новое разрешение источника / качество. */
-  resize(vw, vh) {
+  /** Размер области показа — от него зависят пропорции кадра в режиме «во весь экран». */
+  setDisplaySize(w, h) {
+    this.dispW = w;
+    this.dispH = h;
+  }
+
+  /**
+   * Подгоняет буферы под источник, качество и пропорции экрана.
+   * В режиме «cover» рабочий кадр получает пропорции экрана, а лишнее
+   * обрезается ещё при захвате — что видно на экране, то и попадёт в снимок.
+   */
+  ensureTargets(vw, vh) {
     const { cap, layers } = QUALITY[this.quality];
-    const scale = Math.min(1, cap / Math.max(vw, vh));
-    const w = Math.max(2, Math.round((vw * scale) / 2) * 2);
-    const h = Math.max(2, Math.round((vh * scale) / 2) * 2);
+    const va = vw / vh;
+    const cover = this.fit === 'cover' && this.dispW > 0 && this.dispH > 0;
+    const ta = cover ? this.dispW / this.dispH : va;
+
+    // обрезка по короткой стороне, без растягивания картинки
+    this.crop = va > ta ? [ta / va, 1] : [1, va / ta];
+
+    const side = Math.min(cap, Math.max(vw, vh));
+    const w = Math.max(2, Math.round((ta >= 1 ? side : side * ta) / 2) * 2);
+    const h = Math.max(2, Math.round((ta >= 1 ? side / ta : side) / 2) * 2);
     if (w === this.w && h === this.h && this.hist && this.hist.layers === layers) return;
 
     this.dispose();
@@ -139,6 +161,7 @@ export class Pipeline {
     prog.use();
     prog.set('uVideo', this.videoTex);
     prog.set('uMirror', this.mirror ? 1 : 0);
+    prog.set('uCrop', this.crop);
     gl.bindVertexArray(this.quad);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
@@ -152,7 +175,7 @@ export class Pipeline {
   frame(nowMs) {
     const v = this.video;
     if (!v.videoWidth || !v.videoHeight) return;
-    this.resize(v.videoWidth, v.videoHeight);
+    this.ensureTargets(v.videoWidth, v.videoHeight);
 
     const now = nowMs / 1000;
     this.dt = this.last ? Math.min(0.1, now - this.last) : 1 / 60;

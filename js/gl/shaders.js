@@ -14,12 +14,16 @@ float luma(vec3 c){ return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
 const fs = (body) => HEAD + '\n' + body;
 
-/** Захват кадра камеры в историю: зеркалирование и приведение к рабочему разрешению. */
+/**
+ * Захват кадра камеры в историю: кадрирование под пропорции экрана,
+ * зеркалирование и приведение к рабочему разрешению.
+ */
 export const INGEST = fs(`
 uniform sampler2D uVideo;
 uniform float uMirror;
+uniform vec2 uCrop;
 void main(){
-  vec2 uv = vUv;
+  vec2 uv = (vUv - 0.5) * uCrop + 0.5;
   if (uMirror > 0.5) uv.x = 1.0 - uv.x;
   fragColor = vec4(texture(uVideo, uv).rgb, 1.0);
 }`);

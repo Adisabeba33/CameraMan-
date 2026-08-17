@@ -262,11 +262,11 @@ export const MODES = [
       S('stack', 'Накопление кадров', 1, 16, 1, 8, (v) => String(v)),
       S('bloom', 'Свечение огней', 0, 1, 0.05, 0.5, pct),
       S('noise', 'Шум прибора', 0, 0.4, 0.01, 0.12, pct),
-      SEG('mask', 'Окуляры', [
-        { v: 0, label: 'Нет' },
-        { v: 1, label: 'Один' },
-        { v: 2, label: 'Два' },
-      ], 2),
+      SEG('eyepieces', 'Окуляры прибора', [
+        { v: 0, label: 'Без них' },
+        { v: 1, label: 'Круг' },
+        { v: 2, label: 'Бинокль' },
+      ], 0),
     ],
     render(ctx) {
       const p = ctx.params;
@@ -284,7 +284,7 @@ export const MODES = [
         uSrc: ctx.aux.read.tex,
         uPhosphor: p.phosphor,
         uNoise: p.noise,
-        uMask: p.mask,
+        uMask: p.eyepieces,
         uBloom: p.bloom,
         uTime: ctx.time,
         uAspect: ctx.w / ctx.h,
